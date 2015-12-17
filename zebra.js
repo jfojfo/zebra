@@ -212,7 +212,33 @@ pkg.isBoolean  = isBoolean;
 pkg.$caller    = null; // current method which is called
 
 
-pkg.clone = function (obj) {
+var Map = Map;
+if (Map === undefined) {
+    var nextId = 1;
+    Map = function () {
+        this.map = {};
+    };
+    Map.prototype.get = function (key) {
+        if (key != null && key.hasOwnProperty('__unique_id__')) {
+            return this.map[key.__unique_id__];
+        }
+    };
+    Map.prototype.set = function (key, value) {
+        if (!key.hasOwnProperty('__unique_id__')) {
+            key.__unique_id__ = nextId++;
+        }
+        this.map[key.__unique_id__] = value;
+    };
+}
+
+pkg.clone = function (obj, map) {
+    map = map || new Map();
+
+    var t = map.get(obj);
+    if (t !== undefined) {
+        return t;
+    }
+
     // clone atomic type
     if (obj == null || zebra.isString(obj) || zebra.isBoolean(obj) || zebra.isNumber(obj)) {
         return obj;
@@ -220,14 +246,15 @@ pkg.clone = function (obj) {
 
     // clone with provided custom "clone" method
     if (typeof obj.$clone !== "undefined") {
-        return obj.$clone();
+        return obj.$clone(map);
     }
 
     // clone array
     if (Array.isArray(obj)) {
         var nobj = [];
+        map.set(obj, nobj);
         for(var i = 0; i < obj.length; i++) {
-            nobj[i] = pkg.clone(obj[i]);
+            nobj[i] = pkg.clone(obj[i], map);
         }
         return nobj;
     }
@@ -238,10 +265,11 @@ pkg.clone = function (obj) {
     }
 
     var nobj = {};
+    map.set(obj, nobj);
     // clone object fields
     for(var k in obj) {
         if (obj.hasOwnProperty(k) === true) {
-            nobj[k] = pkg.clone(obj[k]);
+            nobj[k] = pkg.clone(obj[k], map);
         }
     }
 
@@ -709,12 +737,24 @@ pkg.Class = make_template(null, function() {
         throw new Error("$super is called outside of class context");
     };
 
-    $template.prototype.$clone = function() {
+    $template.prototype.$clone = function(map) {
+        map = map || new Map();
+
         var f = function() {};
         f.prototype = this.constructor.prototype;
         var nobj = new f();
+        map.set(this, nobj);
+
         for(var k in this) {
-            if (this.hasOwnProperty(k)) nobj[k] = zebra.clone(this[k]);
+            if (this.hasOwnProperty(k)) {
+                // obj's layout is obj itself
+                var t = map.get(this[k]);
+                if (t !== undefined) {
+                    nobj[k] = t;
+                } else {
+                    nobj[k] = zebra.clone(this[k], map);
+                }
+            }
         }
 
         nobj.constructor = this.constructor;
@@ -1751,10 +1791,11 @@ pkg.Layoutable = Class(L, [
          * @method validate
          */
         this.validate = function() {
+            var isValid = this.isValid;
             if (this.isValid === false) this.validateMetric();
 
             if (this.width > 0 && this.height > 0 &&
-                this.isLayoutValid === false &&
+                (isValid === false || this.isLayoutValid === false) &&
                 this.isVisible === true)
             {
                 this.layout.doLayout(this);
@@ -2391,20 +2432,20 @@ pkg.RasterLayout = Class(L, [
 
                     if (ctr != null) {
                         var x = el.x, y = el.y;
-                        if (ctr === pkg.CENTER) {
-                            x = Math.floor((c.width  - ww)/2);
-                            y = Math.floor((c.height - hh)/2);
+                        if ((ctr & pkg.TOP) > 0) {
+                            y = 0;
+                        } else if ((ctr & pkg.BOTTOM) > 0) {
+                            y = c.height - hh;
+                        } else if ((ctr & pkg.CENTER) > 0) {
+                            y = (c.height - hh) / 2;
                         }
-                        else {
-                            if ((ctr & pkg.TOP) > 0)  y = 0;
-                            else {
-                                if ((ctr & pkg.BOTTOM) > 0)  y = c.height - hh;
-                            }
 
-                            if ((ctr & pkg.LEFT) > 0)   x = 0;
-                            else {
-                                if ((ctr & pkg.RIGHT) > 0)  x = c.width - ww;
-                            }
+                        if ((ctr & pkg.LEFT) > 0) {
+                            x = 0;
+                        } else if ((ctr & pkg.RIGHT) > 0) {
+                            x = c.width - ww;
+                        } else if ((ctr & pkg.CENTER) > 0) {
+                            x = (c.width - ww) / 2;
                         }
                         el.setLocation(x, y);
                     }
@@ -2579,16 +2620,29 @@ pkg.FlowLayout = Class(L, [
                         ctr = a.constraints == null ? null : pkg.$constraints(a.constraints);
 
                     if (this.direction === pkg.HORIZONTAL){
+                        ctr = ctr || this.ay;
                         if (ctr === pkg.STRETCH) {
                             d.height = c.height - t - c.getBottom();
                         }
 
-                        a.setLocation(px, Math.floor((psSize.height - d.height) / 2) + py);
+                        a.setLocation(px, ctr === pkg.STRETCH ? t :
+                            (ctr === pkg.TOP ? py :
+                                (ctr === pkg.BOTTOM ?
+                                    Math.floor(psSize.height - d.height) + py :
+                                    Math.floor((psSize.height - d.height) / 2) + py)));
                         px += (d.width + this.gap);
                     }
                     else {
-                        if (ctr === pkg.STRETCH) d.width = c.width - l - c.getRight();
-                        a.setLocation(px + Math.floor((psSize.width - d.width) / 2), py);
+                        ctr = ctr || this.ax;
+                        if (ctr === pkg.STRETCH) {
+                            d.width = c.width - l - c.getRight();
+                        }
+                        a.setLocation(ctr === pkg.STRETCH ? l :
+                            (ctr === pkg.LEFT ? px :
+                                (ctr === pkg.RIGHT ?
+                                    px + Math.floor(psSize.width - d.width) :
+                                    px + Math.floor((psSize.width - d.width) / 2))),
+                            py);
                         py += d.height + this.gap;
                     }
 
@@ -3428,6 +3482,22 @@ pkg.findInTree = function(root, path, eq, cb) {
                     if (deep && list_child(kid, name, deep, cb)) {
                         return true;
                     }
+                }
+            }
+            if (zebra.instanceOf(r, zebra.ui.ViewPan)) {
+                if (r.view != null) {
+                    var views = [r.view];
+                    if (zebra.instanceOf(r.view, zebra.ui.CompositeViewBase)) {
+                        r.view.iterate(function(k, v) {
+                            views.push(v);
+                        });
+                    }
+                    return list_child({kids: views}, name, deep, cb);
+                }
+            }
+            if (zebra.instanceOf(r, zebra.ui.CompRender)) {
+                if (r.target != null && zebra.instanceOf(r.target, zebra.ui.Panel)) {
+                    return list_child({kids: [r.target]}, name, deep, cb);
                 }
             }
             return false;
@@ -6182,6 +6252,62 @@ pkg.Text = Class(pkg.TextModel, [
 ]);
 
 /**
+ * Auto wrap multi-line text model implementation, use it together with zebra.ui.AutoWrapLabel
+ * @class zebra.data.AutoWrapText
+ * @param  {String}  [s] the specified text the model has to be filled
+ * @constructor
+ * @extends zebra.data.Text
+ */
+pkg.AutoWrapText = Class(pkg.Text, [
+    function (text, font, maxWidth) {
+        this.origText = text;
+        this.font = font ? font : null;
+        this.maxWidth = maxWidth ? maxWidth : 0;
+        return this.$super(text);
+    },
+    function setValue(text) {
+        if (this.maxWidth > 0 && this.font != null) {
+            var lines = [];
+            var s = '';
+            for (var i in text) {
+                var c = text[i];
+                var old = s;
+                s += c;
+
+                if (c == '\n') {
+                    lines.push(old);
+                    s = '';
+                } else {
+                    var width = this.font.stringWidth(s);
+                    if (width > this.maxWidth) {
+                        if (old.length == 0) {
+                            old = s;
+                        }
+                        lines.push(old);
+                        s = c;
+                    }
+                }
+            }
+            lines.push(s);
+            text = lines.join('\n');
+        }
+        return this.$super(text);
+    },
+    function setFont(font) {
+        if (this.font != font) {
+            this.font = font;
+            this.setValue(this.origText);
+        }
+    },
+    function setMaxWidth(maxWidth) {
+        if (this.maxWidth != maxWidth) {
+            this.maxWidth = maxWidth;
+            this.setValue(this.origText);
+        }
+    }
+]);
+
+/**
  * Single line text model implementation
  * @param  {String}  [s] the specified text the model has to be filled
  * @param  {Integer} [max] the specified maximal text length
@@ -7129,8 +7255,8 @@ pkg.Matrix = Class([
         // in landscape mode because of a bug (full page size is
         // just 1 pixels column more than video memory that can keep it)
         // So, just make width always one pixel less.
-        return { width : window.innerWidth - 1,
-                 height: window.innerHeight   };
+        return { width : document.documentElement.clientWidth - 1,
+                 height: document.documentElement.clientHeight };
     };
 
     pkg.$measure = function(e, cssprop) {
@@ -7531,12 +7657,12 @@ pkg.Matrix = Class([
 
         var $wrt = null, winSizeUpdated = false, wpw = -1, wph = -1;
         window.addEventListener("resize", function(e) {
-            if (wpw == window.innerWidth && wph == window.innerHeight) {
+            if (wpw == document.documentElement.clientWidth && wph == document.documentElement.clientHeight) {
                 return;
             }
 
-            wpw = window.innerWidth;
-            wph = window.innerHeight;
+            wpw = document.documentElement.clientWidth;
+            wph = document.documentElement.clientHeight;
 
             if ($wrt != null) {
                 winSizeUpdated = true;
@@ -8056,7 +8182,7 @@ pkg.Matrix = Class([
 
                                 // using gamma we can figure out direction
                                 if (gamma > -PI4) {
-                                    d = (gamma < PI4) ? "right" : (gamma < PI4_3 ? "buttom" : "left");
+                                    d = (gamma < PI4) ? "right" : (gamma < PI4_3 ? "bottom" : "left");
                                 }
                                 else {
                                     d = (gamma > -PI4_3) ? "top" : "left";
@@ -8622,7 +8748,10 @@ pkg.Matrix = Class([
                     //TODO: this calling prevents generation of phantom mouse move event
                     //but it is not clear if it will stop firing touch end/move events
                     //for some mobile browsers. Check it !
-                    e.preventDefault();
+                    var tagName = e.target.tagName.toLowerCase();
+                    if (tagName !== 'input' && tagName !== 'textarea' || e.target.hasAttribute('readonly')) {
+                        e.preventDefault();
+                    }
 
                 }, false);
 
@@ -8634,7 +8763,12 @@ pkg.Matrix = Class([
                         $this.$UP(tt.identifier, tt, TOUCH_STUB);
                     }
 
-                    e.preventDefault();
+                    console.log("2. touchend() " + TOUCH_STUB.touchCounter);
+                    var tagName = e.target.tagName.toLowerCase();
+                    if (tagName !== 'input' && tagName !== 'textarea' || e.target.hasAttribute('readonly')) {
+                        e.preventDefault();
+                    }
+
                 }, false);
 
                 element.addEventListener("touchmove", function(e) {
@@ -8652,7 +8786,7 @@ pkg.Matrix = Class([
                         if (t != null && (t.pageX != Math.floor(nmt.pageX) ||
                                           t.pageY != Math.floor(nmt.pageY))  )
                         {
-                            $this.$DRAG(t.identifier, t, TOUCH_STUB);
+                            $this.$DRAG(nmt.identifier, nmt, TOUCH_STUB);
                         }
                     }
 
@@ -9000,6 +9134,7 @@ pkg.load = function(path, callback) {
  */
 pkg.View = Class([
     function $prototype() {
+        this.id = null;
         this.gap = 2;
 
         /**
@@ -9055,6 +9190,21 @@ pkg.View = Class([
         * @method paint
         */
         this.paint = function(g,x,y,w,h,c) {};
+
+        this.invalidate = function() {
+            if (this.parent != null)
+                this.parent.invalidate();
+            this.repaint();
+        };
+
+        this.repaint = function() {
+            if (this.parent != null)
+                this.parent.repaint();
+        };
+
+        this.setId = function(id) {
+            this.id = id;
+        };
     }
 ]);
 
@@ -10750,6 +10900,19 @@ pkg.HtmlElement = Class(pkg.Panel, [
             return this;
         };
 
+        this.setAttributes = function(attrs) {
+            for(var name in attrs) {
+                this.element.setAttribute(name, attrs[name]);
+            }
+            return this;
+        };
+
+        this.setClassName = function(value) {
+            this.element.setAttribute("class", value);
+            this.vrp();
+            return this;
+        };
+
         this.paint = function(g) {
             // this method is used as an indication that the component
             // is visible and no one of his parent is invisible
@@ -11541,6 +11704,12 @@ pkg.ViewPan = Class(pkg.Panel, [
          * @readOnly
          */
         this.view = null;
+        this.scaleX = 1;
+        this.scaleY = 1;
+
+        this.setScale = function (scale) {
+            this.scaleX = this.scaleY = scale;
+        };
 
         this.paint = function (g){
             if (this.view != null){
@@ -11565,6 +11734,9 @@ pkg.ViewPan = Class(pkg.Panel, [
 
             if (v != old) {
                 this.view = v;
+                if (this.view != null) {
+                    this.view.parent = this;
+                }
                 this.notifyRender(old, v);
                 this.vrp();
             }
@@ -11582,7 +11754,17 @@ pkg.ViewPan = Class(pkg.Panel, [
          * @method  calcPreferredSize
          */
         this.calcPreferredSize = function (t) {
-            return this.view != null ? this.view.getPreferredSize() : { width:0, height:0 };
+            if (this.view != null) {
+                var ps = this.view.getPreferredSize();
+                if (this.scaleX && this.scaleX > 0) {
+                    ps.width = ps.width * this.scaleX;
+                }
+                if (this.scaleY && this.scaleY > 0) {
+                    ps.height = ps.height * this.scaleY;
+                }
+                return ps;
+            }
+            return { width:0, height:0 };
         };
     }
 ]);
@@ -11872,6 +12054,9 @@ pkg.FocusManager = Class(pkg.Manager, [
          * @method requestFocus
          */
         this.requestFocus = function(c) {
+            if (c != null && !this.isFocusable(c)) {
+                c = null;
+            }
             if (c != this.focusOwner && (c == null || this.isFocusable(c))) {
                 var oldFocusOwner = this.focusOwner;
                 if (c != null) {
@@ -11920,9 +12105,9 @@ pkg.FocusManager = Class(pkg.Manager, [
                 // to fix it a timer is used
                 if (document.activeElement !== e.source.getCanvas().$container) {
                     var $this = this;
-                    setTimeout(function() {
+//                    setTimeout(function() {
                         $this.requestFocus(e.source);
-                    }, 50);
+//                    }, 50);
                 }
                 else {
                     this.requestFocus(e.source);
@@ -13300,7 +13485,7 @@ pkg.CompRender = Class(pkg.Render, [
             var c = this.target;
             if (c != null && c.isVisible === true) {
                 var prevW = -1, prevH = 0;
-                if ((w != c.width || h != c.height) && c.getCanvas() == null){
+                if ((w != c.width || h != c.height) /*&& c.getCanvas() == null*/){
                     prevW = c.width;
                     prevH = c.height;
                     c.setSize(w, h);
@@ -13320,6 +13505,11 @@ pkg.CompRender = Class(pkg.Render, [
                 }
             }
         };
+    },
+
+    function setTarget(target) {
+        this.$super(target);
+        this.target.parent = this;
     }
 ]);
 
@@ -13533,16 +13723,7 @@ pkg.Pattern = Class(pkg.Render, [
     }
 ]);
 
-/**
-* Composite view. The view allows developers to combine number of
-* views and renders its together.
-* @class zebra.ui.CompositeView
-* @param {Arrayt|Object} [views] array of dictionary of views
-* to be composed together
-* @constructor
-* @extends zebra.ui.View
-*/
-pkg.CompositeView = Class(pkg.View, [
+pkg.CompositeViewBase = Class(pkg.View, [
     function $prototype() {
         /**
          * Left padding
@@ -13658,15 +13839,34 @@ pkg.CompositeView = Class(pkg.View, [
         this.outline = function(g,x,y,w,h,d) {
             return this.voutline != null && this.voutline.outline(g,x,y,w,h,d);
         };
+    },
 
-        this[''] = function() {
-            this.views = [];
-            var args = arguments.length == 1 ? arguments[0] : arguments;
-            for(var i = 0; i < args.length; i++) {
-                this.views[i] = pkg.$view(args[i]);
+    function() {
+
+    }
+]);
+
+/**
+ * Composite view. The view allows developers to combine number of
+ * views and renders its together.
+ * @class zebra.ui.CompositeView
+ * @param {Arrayt|Object} [views] array of dictionary of views
+ * to be composed together
+ * @constructor
+ * @extends zebra.ui.View
+ */
+pkg.CompositeView = Class(pkg.CompositeViewBase, [
+    function() {
+        this.$super();
+        this.views = [];
+        var args = arguments.length == 1 ? arguments[0] : arguments;
+        for(var i = 0; i < args.length; i++) {
+            this.views[i] = pkg.$view(args[i]);
+            if (this.views[i] != null) {
+                this.views[i].parent = this;
                 this.$recalc(this.views[i]);
             }
-        };
+        }
     }
 ]);
 
@@ -13682,7 +13882,7 @@ pkg.CompositeView = Class(pkg.View, [
 * @class zebra.ui.ViewSet
 * @extends zebra.ui.CompositeView
 */
-pkg.ViewSet = Class(pkg.CompositeView, [
+pkg.ViewSet = Class(pkg.CompositeViewBase, [
     function $prototype() {
         this.paint = function(g,x,y,w,h,d) {
             if (this.activeView != null) {
@@ -13733,35 +13933,40 @@ pkg.ViewSet = Class(pkg.CompositeView, [
             }
         };
 
-        this[''] = function(args) {
-            if (args == null) {
-                throw new Error("" + args);
+    },
+    function(args) {
+        this.$super();
+
+        if (args == null) {
+            throw new Error("" + args);
+        }
+
+        /**
+         * Views set
+         * @attribute views
+         * @type Object
+         * @default {}
+         * @readOnly
+         */
+        this.views = {};
+
+        /**
+         * Active in the set view
+         * @attribute activeView
+         * @type View
+         * @default null
+         * @readOnly
+         */
+        this.activeView = null;
+
+        for(var k in args) {
+            this.views[k] = pkg.$view(args[k]);
+            if (this.views[k] != null) {
+                this.views[k].parent = this;
+                this.$recalc(this.views[k]);
             }
-
-            /**
-             * Views set
-             * @attribute views
-             * @type Object
-             * @default {}
-             * @readOnly
-            */
-            this.views = {};
-
-            /**
-             * Active in the set view
-             * @attribute activeView
-             * @type View
-             * @default null
-             * @readOnly
-            */
-            this.activeView = null;
-
-            for(var k in args) {
-                this.views[k] = pkg.$view(args[k]);
-                if (this.views[k] != null) this.$recalc(this.views[k]);
-            }
-            this.activate("*");
-        };
+        }
+        this.activate("*");
     }
 ]);
 
@@ -15216,7 +15421,7 @@ pkg.Label = Class(pkg.ViewPan, [
          */
         this.setModel = function(m) {
             this.setView(zebra.isString(m) ? new pkg.StringRender(m)
-                                           : new pkg.TextRender(m));
+                : (instanceOf(m, zebra.data.TextModel) ? new pkg.TextRender(m) : m));
         };
 
         this.getModel = function() {
@@ -15287,10 +15492,57 @@ pkg.Label = Class(pkg.ViewPan, [
     },
 
     function (r) {
-        this.setView(arguments.length === 0 ||
-                     zebra.isString(r)       ? new pkg.StringRender(r)
-                                             : (instanceOf(r, zebra.data.TextModel) ? new pkg.TextRender(r) : r));
+        if (arguments.length > 0) {
+            this.setModel(r);
+        }
         this.$super();
+    }
+]);
+
+/**
+ * Label UI component class. The label can be used to visualize simple string which will be
+ * auto wrapped if the string length exceeds parent container width
+
+     // render simple string auto wrap
+     var l = new zebra.ui.Label("Auto wrap simple string");
+
+     // render multi lines auto wrap text
+     var l = new zebra.ui.Label(new zebra.data.AutoWrapText("Auto wrap\nmultiline\ntext"));
+
+ * @param  {String|zebra.data.AutoWrapText} [r] a text to be shown with the label.
+ * You can pass a simple string or an instance of a AutoWrapText.
+ * @constructor
+ * @class zebra.ui.AutoWrapLabel
+ * @extends zebra.ui.Label
+ */
+pkg.AutoWrapLabel = Class(pkg.Label, [
+    function setModel(m) {
+        var render = m;
+        if (zebra.isString(m)) {
+            var text = new zebra.data.AutoWrapText(m);
+            var render = new pkg.TextRender(text);
+            text.setFont(render.font);
+        } else if (zebra.instanceOf(m, zebra.data.AutoWrapText)) {
+            render = new pkg.TextRender(m);
+        } else {
+            throw new Error("Invalid argument type, only string or AutoWrapText are supported");
+        }
+        this.setView(render);
+    },
+    function setFont(f) {
+        var model = this.getModel();
+        if (model != null && zebra.instanceOf(model, zebra.data.AutoWrapText)) {
+            model.setFont(f);
+        }
+        return this.$super(f);
+    },
+    function resized(prevWidth, prevHeight) {
+        var model = this.getModel();
+        if (model != null && zebra.instanceOf(model, zebra.data.AutoWrapText)) {
+            // this will invalidate all
+            model.setMaxWidth(this.width);
+        }
+        this.$super(prevWidth, prevHeight);
     }
 ]);
 
@@ -17920,7 +18172,15 @@ pkg.ScrollPan = Class(pkg.Panel, [
                 };
 
                 this.doLayout = function(t) {
-                    t.kids[0].toPreferredSize();
+                    var kid = t.kids[0];
+                    if (kid.constraints === L.STRETCH) {
+                        var ps = kid.getPreferredSize();
+                        var w = t.parent.hBar != null ? ps.width : t.width;
+                        var h = t.parent.vBar != null ? ps.height : t.height;
+                        kid.setSize(w, h);
+                    } else {
+                        kid.toPreferredSize();
+                    }
                 };
             }
         ]);
@@ -20064,9 +20324,9 @@ pkg.MobileScrollMan = Class(pkg.Manager, [
                 (e.direction === "bottom" || e.direction === "top") &&
                 this.target.vBar != null &&
                 this.target.vBar.isVisible === true &&
-                e.touch.dy !== 0)  // TODO: what is it ?
+                e.dy !== 0)
             {
-                this.$dt = 2 * e.touch.dy;   // TODO: what is it ?
+                this.$dt = 2 * e.dy;
                 var $this = this, bar = this.target.vBar, k = 0;
 
                 this.timer = setInterval(function() {
@@ -30708,7 +30968,7 @@ pkg.HtmlElementMan = Class(pkg.Manager, [
 
 pkg.HtmlFocusableElement = Class(pkg.HtmlElement, [
     function $prototype() {
-        this.$getFocusHolderElement = function() {
+        this.$getElementRootFocus = function() {
             return this.element;
         };
     }
@@ -30754,6 +31014,29 @@ pkg.HtmlTextInput = Class(pkg.HtmlFocusableElement, [
         this.$super(e);
         this.setAttribute("tabindex", 0);
         this.setValue(text);
+
+        var input = this.element;
+        input.addEventListener('mouseover', function (e) {
+            e.stopPropagation();
+        }, false);
+        input.addEventListener('mousemove', function (e) {
+            e.stopPropagation();
+        }, false);
+        input.addEventListener('mouseout', function (e) {
+            e.stopPropagation();
+        }, false);
+        input.addEventListener('mousedown', function (e) {
+            e.stopPropagation();
+        }, false);
+        input.addEventListener('mouseup', function (e) {
+            e.stopPropagation();
+        }, false);
+        input.addEventListener('mouseenter', function (e) {
+            e.stopPropagation();
+        }, false);
+        input.addEventListener('mouseleave', function (e) {
+            e.stopPropagation();
+        }, false);
     }
 ]);
 

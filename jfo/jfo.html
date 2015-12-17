@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>my test</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
+    <style>
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #F2F2F2;
+        }
+        #mycanvas {
+            width: 100%;
+            height: 100%;
+            color: lightcyan;
+        }
+        .list_cell_text_input_money::-webkit-input-placeholder {
+            color: #f44335;
+        }
+    </style>
+</head>
+<body>
+<input id="testinput" type="text" placeholder="请到站后输入金额">
+<textarea id="testarea">jfsjkfdskdf</textarea>
+<canvas id="mycanvas"></canvas>
+<script src='/zebra.js' type='text/javascript'></script>
+<script src='jfo.js' type='text/javascript'></script>
+<script>
+//    setTimeout(function () {
+//        document.querySelector('#testinput').focus();
+//    }, 2000);
+
+    var input = document.querySelector('#testinput');
+    var area = document.querySelector('#testarea');
+
+    input.style.display = "none";
+    area.style.display = "none";
+
+    input.addEventListener('touchstart', function (e) {
+        console.log('touchstart');
+//        e.preventDefault();
+    }, false);
+    input.addEventListener('touchend', function (e) {
+        console.log('touchend');
+//        e.preventDefault();
+//        input.focus();
+    }, false);
+    input.addEventListener('mouseover', function (e) {
+        console.log('mouseover');
+//        e.preventDefault();
+    }, false);
+    input.addEventListener('mousemove', function (e) {
+        console.log('mousemove');
+//        e.preventDefault();
+    }, false);
+    input.addEventListener('mousedown', function (e) {
+        console.log('mousedown');
+//        e.preventDefault();
+    }, false);
+    input.addEventListener('mouseup', function (e) {
+        console.log('mouseup');
+    }, false);
+    input.addEventListener('mouseenter', function (e) {
+        console.log('mouseenter');
+    }, false);
+    input.addEventListener('mouseleave', function (e) {
+        console.log('mouseleave');
+    }, false);
+
+    input.addEventListener('focus', function (e) {
+        console.log('focus');
+    }, false);
+
+</script>
+</body>
+</html>

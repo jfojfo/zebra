@@ -48,8 +48,8 @@ var demoFiles = [
 gulp.task('http', function() {
     gulp.src('.')
         .pipe(webserver({
-            port: 8080,
-            host: "localhost",
+            port: 8090,
+            host: "0.0.0.0",
             directoryListing: true,
             open: false
         }));
