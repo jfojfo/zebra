@@ -10796,6 +10796,10 @@ pkg.Panel = Class(L.Layoutable, [
                     this.setLayout(l);
                 }
             }
+
+            if (!zebra.instanceOf(this.layout, zebra.layout.RasterLayout)) {
+                this.properties(zebra.jfo.AllPanel);
+            }
         };
     }
 ]);
